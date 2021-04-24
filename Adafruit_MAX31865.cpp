@@ -81,6 +81,11 @@
     SPISettings(500000, MSBFIRST, MAX31865_SPI_MODE);
 #endif
 
+uint32_t lastReadStamp = 0;
+uint16_t lastRead = 0;
+uint32_t lastStamp = 0;
+uint16_t lastStep = 0;
+
 /**************************************************************************/
 /*!
     @brief Create the interface object using software (bitbang) SPI for
@@ -257,6 +262,11 @@ bool Adafruit_MAX31865::begin(max31865_numwires_t wires) {
   enableBias(false);
   autoConvert(false);
   clearFault();
+
+  lastRead = 0;
+  lastStamp = 0;
+  lastStep = 0;
+  lastReadStamp = 0;
 
   #if HAS_STM32_DEBUG
     //Serial.print("config: ");
@@ -441,6 +451,9 @@ void Adafruit_MAX31865::setWires(max31865_numwires_t wires) {
 float Adafruit_MAX31865::temperature(float RTDnominal, float refResistor) {
   float Z1, Z2, Z3, Z4, Rt, temp;
 
+  if (millis() - lastReadStamp > 5000)
+    return 20;
+
   Rt = readRTD();
 
   Rt /= 32768;
@@ -486,41 +499,12 @@ float Adafruit_MAX31865::temperature(float RTDnominal, float refResistor) {
 */
 /**************************************************************************/
 uint16_t Adafruit_MAX31865::readRTD(void) {
-  #if AVR_FLAG
 
-    clearFault();
-    enableBias(true);
-    delay(10);
-    uint8_t t = readRegister8(MAX31856_CONFIG_REG);
-    t |= MAX31856_CONFIG_1SHOT;
-    writeRegister8(MAX31856_CONFIG_REG, t);
-    delay(65);
+  uint16_t rtd = readRTD_with_Fault();
+  // remove fault
+  rtd >>= 1;
 
-    uint16_t rtd = readRegister16(MAX31856_RTDMSB_REG);
-
-    // remove fault
-    rtd >>= 1;
-
-    return rtd;
-
-  #else //AVR_FLAG
-
-    clearFault();
-    enableBias(true);
-    DELAY_US(10000);
-    uint8_t t = readRegister8(MAX31856_CONFIG_REG);
-    t |= MAX31856_CONFIG_1SHOT;
-    writeRegister8(MAX31856_CONFIG_REG, t);
-    DELAY_US(65000);
-
-    uint16_t rtd = readRegister16(MAX31856_RTDMSB_REG);
-
-    // remove fault
-    rtd >>= 1;
-
-    return rtd;
-
-  #endif //end AVR_FLAG
+  return rtd;
 }
 
 /**************************************************************************/
@@ -555,63 +539,74 @@ uint16_t Adafruit_MAX31865::readRTD_Resistance(uint32_t refResistor) {
 */
 /**************************************************************************/
 uint16_t Adafruit_MAX31865::readRTD_with_Fault(void) {
-  #if AVR_FLAG
 
+  uint8_t t;
+  uint16_t rtd;
+
+  switch (lastStep) {
+  case 0:
     clearFault();
     enableBias(true);
-    delay(10);
-    uint8_t t = readRegister8(MAX31856_CONFIG_REG);
+  
+    lastStamp = millis();
+    lastStep = 1;
+    break;
+  
+  case 1:
+    if (millis() - lastStamp < 10)
+      return lastRead;
+
+    t = readRegister8(MAX31856_CONFIG_REG);
     t |= MAX31856_CONFIG_1SHOT;
     writeRegister8(MAX31856_CONFIG_REG, t);
-    delay(65);
 
-    uint16_t rtd = readRegister16(MAX31856_RTDMSB_REG);
+    lastStamp = millis();
+    lastStep = 2;
+    break;
 
-    return rtd;
-
-  #else //AVR_FLAG
-
-    uint16_t rtd = 0;
-    clearFault();
-    enableBias(true);
-    DELAY_US(10000);
-    uint8_t t = readRegister8(MAX31856_CONFIG_REG);
-    t |= MAX31856_CONFIG_1SHOT;
-    writeRegister8(MAX31856_CONFIG_REG, t);
-    DELAY_US(65000);
-
+  case 2:
+    if (millis() - lastStamp < 65)
+      return lastRead;
     rtd = readRegister16(MAX31856_RTDMSB_REG);
 
-    #if HAS_STM32_DEBUG || HAS_LPC1768_DEBUG
-      uint16_t rtd_MSB = rtd >> 8;
-      uint16_t rtd_LSB = rtd & 0x00FF;
-    #endif
-    #if HAS_STM32_DEBUG
-      Serial.println(" ");
-      Serial.print("RTD MSB : 0x");
-      Serial.print(rtd_MSB, HEX);
-      Serial.print("  : ");
-      Serial.print(rtd_MSB);
-      Serial.print("  RTD LSB : 0x");
-      Serial.print(rtd_LSB, HEX);
-      Serial.print("  : ");
-      Serial.println(rtd_LSB);
-      Serial.println(" ");
-    #endif
-    #if HAS_LPC1768_DEBUG
-      SERIAL_ECHOLN();
-      SERIAL_ECHO("RTD MSB : ");
-      SERIAL_PRINTF("   0x%X  ", rtd_MSB);
-      SERIAL_ECHOPAIR(" : ", rtd_MSB);
-      SERIAL_ECHO("   RTD LSB : ");
-      SERIAL_PRINTF("   0x%X  ", rtd_LSB);
-      SERIAL_ECHOLNPAIR(" : ", rtd_LSB,"   ");
-      SERIAL_ECHOLN();
-    #endif
+    lastStep = 0;
+    lastRead = rtd;
+    lastReadStamp = millis();
 
-    return rtd;
+    break;
+  }
 
-  #endif //end AVR_FLAG
+  #if HAS_STM32_DEBUG || HAS_LPC1768_DEBUG
+  if (lastStep = 0) {
+    uint16_t rtd_MSB = rtd >> 8;
+    uint16_t rtd_LSB = rtd & 0x00FF;
+  #endif
+  #if HAS_STM32_DEBUG
+    Serial.println(" ");
+    Serial.print("RTD MSB : 0x");
+    Serial.print(rtd_MSB, HEX);
+    Serial.print("  : ");
+    Serial.print(rtd_MSB);
+    Serial.print("  RTD LSB : 0x");
+    Serial.print(rtd_LSB, HEX);
+    Serial.print("  : ");
+    Serial.println(rtd_LSB);
+    Serial.println(" ");
+  }
+  #endif
+  #if HAS_LPC1768_DEBUG
+    SERIAL_ECHOLN();
+    SERIAL_ECHO("RTD MSB : ");
+    SERIAL_PRINTF("   0x%X  ", rtd_MSB);
+    SERIAL_ECHOPAIR(" : ", rtd_MSB);
+    SERIAL_ECHO("   RTD LSB : ");
+    SERIAL_PRINTF("   0x%X  ", rtd_LSB);
+    SERIAL_ECHOLNPAIR(" : ", rtd_LSB,"   ");
+    SERIAL_ECHOLN();
+  }
+  #endif
+
+  return lastRead;
 }
 
 /**********************************************/
