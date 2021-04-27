@@ -17,7 +17,7 @@
 //#define DEBUG_STM32
 //#define DEBUG_STM32_SPI
 //#define DEBUG_LPC_SPI
-//#define DEBUG_LPC
+#define DEBUG_LPC
 
 #if defined(ARDUINO_ARCH_STM32) && defined(DEBUG_STM32)
   #define HAS_STM32_DEBUG 1
@@ -85,6 +85,9 @@ uint32_t lastReadStamp = 0;
 uint16_t lastRead = 0;
 uint32_t lastStamp = 0;
 uint16_t lastStep = 0;
+uint16_t rtd = 0;
+
+#define MAX31865_DEFAULT_CONFIG MAX31856_CONFIG_MODEOFF | MAX31856_CONFIG_24WIRE | MAX31856_CONFIG_FILT50HZ
 
 /**************************************************************************/
 /*!
@@ -353,6 +356,9 @@ bool Adafruit_MAX31865::begin(max31865_numwires_t wires) {
 */
 /**************************************************************************/
 uint8_t Adafruit_MAX31865::readFault(void) {
+
+  lastRead = 0xFFFF; // readFault is called when THERMOCOUPLE_MAX_ERRORS is reached, so set lastRead to a killing value
+
   return readRegister8(MAX31856_FAULTSTAT_REG);
 }
 
@@ -435,6 +441,10 @@ void Adafruit_MAX31865::setWires(max31865_numwires_t wires) {
   writeRegister8(MAX31856_CONFIG_REG, t);
 }
 
+void Adafruit_MAX31865::setFlags(uint8_t flags) {
+  writeRegister8(MAX31856_CONFIG_REG, MAX31865_DEFAULT_CONFIG | flags);
+}
+
 /**************************************************************************/
 /*!
     @brief Read the temperature in C from the RTD through calculation of the
@@ -451,43 +461,40 @@ void Adafruit_MAX31865::setWires(max31865_numwires_t wires) {
 float Adafruit_MAX31865::temperature(float RTDnominal, float refResistor) {
   float Z1, Z2, Z3, Z4, Rt, temp;
 
-  if (millis() - lastReadStamp > 5000)
-    return 20;
+  Rt = lastRead;
 
-  Rt = readRTD();
-
-  Rt /= 32768;
+  Rt /= 65536.0f;
   Rt *= refResistor;
 
   // Serial.print("\nResistance: "); Serial.println(Rt, 8);
 
   Z1 = -RTD_A;
-  Z2 = RTD_A * RTD_A - (4 * RTD_B);
-  Z3 = (4 * RTD_B) / RTDnominal;
-  Z4 = 2 * RTD_B;
+  Z2 = RTD_A * RTD_A - (4.0 * RTD_B);
+  Z3 = (4.0f * RTD_B) / RTDnominal;
+  Z4 = 2.0f * RTD_B;
 
   temp = Z2 + (Z3 * Rt);
   temp = (sqrt(temp) + Z1) / Z4;
 
-  if (temp >= 0)
+  if (temp >= 0.0f)
     return temp;
 
   // ugh.
   Rt /= RTDnominal;
-  Rt *= 100; // normalize to 100 ohm
+  Rt *= 100.0f; // normalize to 100 ohm
 
   float rpoly = Rt;
 
-  temp = -242.02;
-  temp += 2.2228 * rpoly;
+  temp = -242.02f;
+  temp += 2.2228f * rpoly;
   rpoly *= Rt; // square
-  temp += 2.5859e-3 * rpoly;
+  temp += 2.5859e-3f * rpoly;
   rpoly *= Rt; // ^3
-  temp -= 4.8260e-6 * rpoly;
+  temp -= 4.8260e-6f * rpoly;
   rpoly *= Rt; // ^4
-  temp -= 2.8183e-8 * rpoly;
+  temp -= 2.8183e-8f * rpoly;
   rpoly *= Rt; // ^5
-  temp += 1.5243e-10 * rpoly;
+  temp += 1.5243e-10f * rpoly;
 
   return temp;
 }
@@ -540,14 +547,10 @@ uint16_t Adafruit_MAX31865::readRTD_Resistance(uint32_t refResistor) {
 /**************************************************************************/
 uint16_t Adafruit_MAX31865::readRTD_with_Fault(void) {
 
-  uint8_t t;
-  uint16_t rtd;
-
   switch (lastStep) {
   case 0:
-    clearFault();
-    enableBias(true);
-  
+    setFlags(MAX31856_CONFIG_BIAS | MAX31856_CONFIG_FAULTSTAT);
+
     lastStamp = millis();
     lastStep = 1;
     break;
@@ -556,9 +559,7 @@ uint16_t Adafruit_MAX31865::readRTD_with_Fault(void) {
     if (millis() - lastStamp < 10)
       return lastRead;
 
-    t = readRegister8(MAX31856_CONFIG_REG);
-    t |= MAX31856_CONFIG_1SHOT;
-    writeRegister8(MAX31856_CONFIG_REG, t);
+    setFlags(MAX31856_CONFIG_BIAS | MAX31856_CONFIG_1SHOT);
 
     lastStamp = millis();
     lastStep = 2;
@@ -569,15 +570,24 @@ uint16_t Adafruit_MAX31865::readRTD_with_Fault(void) {
       return lastRead;
     rtd = readRegister16(MAX31856_RTDMSB_REG);
 
+    setFlags(MAX31865_DEFAULT_CONFIG);
+
     lastStep = 0;
-    lastRead = rtd;
-    lastReadStamp = millis();
+
+    if (!(rtd & 1)) { // no fault, update lastRead
+      lastRead = rtd;
+      lastReadStamp = millis();
+    #if HAS_STM32_DEBUG || HAS_LPC1768_DEBUG
+    } else {
+      SERIAL_ECHOLNPAIR("MAX31865 rawread error: ", rtd);
+    #endif
+    }
 
     break;
   }
 
   #if HAS_STM32_DEBUG || HAS_LPC1768_DEBUG
-  if (lastStep = 0) {
+  if (lastStep == 0) {
     uint16_t rtd_MSB = rtd >> 8;
     uint16_t rtd_LSB = rtd & 0x00FF;
   #endif
@@ -595,18 +605,11 @@ uint16_t Adafruit_MAX31865::readRTD_with_Fault(void) {
   }
   #endif
   #if HAS_LPC1768_DEBUG
-    SERIAL_ECHOLN();
-    SERIAL_ECHO("RTD MSB : ");
-    SERIAL_PRINTF("   0x%X  ", rtd_MSB);
-    SERIAL_ECHOPAIR(" : ", rtd_MSB);
-    SERIAL_ECHO("   RTD LSB : ");
-    SERIAL_PRINTF("   0x%X  ", rtd_LSB);
-    SERIAL_ECHOLNPAIR(" : ", rtd_LSB,"   ");
-    SERIAL_ECHOLN();
+    SERIAL_ECHOLNPAIR("MAX31865 MSB: ", rtd_MSB, " LSB: ", rtd_LSB);
   }
   #endif
 
-  return lastRead;
+  return rtd;
 }
 
 /**********************************************/
