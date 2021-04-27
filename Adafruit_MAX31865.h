@@ -17,24 +17,41 @@
 #ifndef ADAFRUIT_MAX31865_H
 #define ADAFRUIT_MAX31865_H
 
-#define MAX31856_CONFIG_REG 0x00
-#define MAX31856_CONFIG_BIAS 0x80
-#define MAX31856_CONFIG_MODEAUTO 0x40
-#define MAX31856_CONFIG_MODEOFF 0x00
-#define MAX31856_CONFIG_1SHOT 0x20
-#define MAX31856_CONFIG_3WIRE 0x10
-#define MAX31856_CONFIG_24WIRE 0x00
-#define MAX31856_CONFIG_FAULTSTAT 0x02
-#define MAX31856_CONFIG_FILT50HZ 0x01
-#define MAX31856_CONFIG_FILT60HZ 0x00
+/****************************************************/
+// Configuration macros:
 
-#define MAX31856_RTDMSB_REG 0x01
-#define MAX31856_RTDLSB_REG 0x02
-#define MAX31856_HFAULTMSB_REG 0x03
-#define MAX31856_HFAULTLSB_REG 0x04
-#define MAX31856_LFAULTMSB_REG 0x05
-#define MAX31856_LFAULTLSB_REG 0x06
-#define MAX31856_FAULTSTAT_REG 0x07
+// Use the sensor's noise fitering at 60Hz (if commented out defaults to 50Hz)
+#define MAX31865_USE_60HZ
+
+// Use the sensor's auto read mode (faster reads but bias voltage always on. If commented, 1-shot reading is performed)
+//#define MAX31865_USE_AUTO_MODE
+
+// Use the library's spike filtering condition to ignore single random read errors (if commented, random read errors may result in temperature errors in Marlin)
+#define MAX31865_USE_READ_ERROR_DETECTION
+
+// Uncomment for 3-wire PT100/PT1000 sensor. Leave commented for 2/4 wire sensor.
+//#define MAX31865_USE_3WIRE
+/****************************************************/
+
+
+#define MAX31865_CONFIG_REG 0x00
+#define MAX31865_CONFIG_BIAS 0x80
+#define MAX31865_CONFIG_MODEAUTO 0x40
+#define MAX31865_CONFIG_MODEOFF 0x00
+#define MAX31865_CONFIG_1SHOT 0x20
+#define MAX31865_CONFIG_3WIRE 0x10
+#define MAX31865_CONFIG_24WIRE 0x00
+#define MAX31865_CONFIG_FAULTSTAT 0x02
+#define MAX31865_CONFIG_FILT50HZ 0x01
+#define MAX31865_CONFIG_FILT60HZ 0x00
+
+#define MAX31865_RTDMSB_REG 0x01
+#define MAX31865_RTDLSB_REG 0x02
+#define MAX31865_HFAULTMSB_REG 0x03
+#define MAX31865_HFAULTLSB_REG 0x04
+#define MAX31865_LFAULTMSB_REG 0x05
+#define MAX31865_LFAULTLSB_REG 0x06
+#define MAX31865_FAULTSTAT_REG 0x07
 
 #define MAX31865_FAULT_HIGHTHRESH 0x80
 #define MAX31865_FAULT_LOWTHRESH 0x40
@@ -72,7 +89,6 @@ public:
 
   Adafruit_MAX31865(int8_t spi_cs);
 
-
   bool begin(max31865_numwires_t x = MAX31865_2WIRE);
 
   uint8_t readFault(void);
@@ -93,8 +109,24 @@ private:
   uint32_t __sclk, __miso, __mosi, __cs;
   uint8_t __pin_mapping = 0x00;
 
-  void readRegisterN(uint8_t addr, uint8_t buffer[], uint8_t n);
+  uint32_t _lastReadStamp = 0;
+  uint16_t _lastRead = 0;
+  uint8_t _lastFault = 0;
 
+#ifndef MAX31865_USE_AUTO_MODE
+  uint32_t _lastStamp = 0;
+  uint16_t _lastStep = 0;
+#endif
+
+  uint16_t _rtd = 0;
+
+  bool detectSpike();
+
+  void resetFlags();
+  void setFlags(uint8_t flags);
+
+  void readRegisterN(uint8_t addr, uint8_t buffer[], uint8_t n);
+  
   uint8_t readRegister8(uint8_t addr);
   uint16_t readRegister16(uint8_t addr);
 

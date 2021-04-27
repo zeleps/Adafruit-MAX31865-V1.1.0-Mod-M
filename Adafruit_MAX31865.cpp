@@ -17,7 +17,7 @@
 //#define DEBUG_STM32
 //#define DEBUG_STM32_SPI
 //#define DEBUG_LPC_SPI
-#define DEBUG_LPC
+//#define DEBUG_LPC
 
 #if defined(ARDUINO_ARCH_STM32) && defined(DEBUG_STM32)
   #define HAS_STM32_DEBUG 1
@@ -81,13 +81,25 @@
     SPISettings(500000, MSBFIRST, MAX31865_SPI_MODE);
 #endif
 
-uint32_t lastReadStamp = 0;
-uint16_t lastRead = 0;
-uint32_t lastStamp = 0;
-uint16_t lastStep = 0;
-uint16_t rtd = 0;
+#ifdef MAX31865_USE_AUTO_MODE
+  #define RTD_READ_MODE MAX31865_CONFIG_MODEAUTO | MAX31865_CONFIG_BIAS
+#else 
+  #define RTD_READ_MODE MAX31865_CONFIG_MODEOFF
+#endif 
 
-#define MAX31865_DEFAULT_CONFIG MAX31856_CONFIG_MODEOFF | MAX31856_CONFIG_24WIRE | MAX31856_CONFIG_FILT50HZ
+#ifdef MAX31865_USE_60HZ
+  #define HZ_FILTER_SETTING MAX31865_CONFIG_FILT60HZ
+#else 
+  #define HZ_FILTER_SETTING MAX31865_CONFIG_FILT50HZ
+#endif 
+
+#ifdef MAX31865_USE_3WIRE
+  #define WIRE_SETTING MAX31865_CONFIG_3WIRE
+#else 
+  #define WIRE_SETTING MAX31865_CONFIG_24WIRE
+#endif 
+
+#define MAX31865_DEFAULT_CONFIG WIRE_SETTING | HZ_FILTER_SETTING | RTD_READ_MODE
 
 /**************************************************************************/
 /*!
@@ -223,7 +235,7 @@ bool Adafruit_MAX31865::begin(max31865_numwires_t wires) {
   clearFault();
 
   // Serial.print("config: ");
-  // Serial.println(readRegister8(MAX31856_CONFIG_REG), HEX);
+  // Serial.println(readRegister8(MAX31865_CONFIG_REG), HEX);
   return true;
 
 #else  // AVR_FLAG
@@ -261,19 +273,21 @@ bool Adafruit_MAX31865::begin(max31865_numwires_t wires) {
     // readRegister8(i);
   }
 
-  setWires(wires);
-  enableBias(false);
-  autoConvert(false);
-  clearFault();
+  #ifdef MAX31865_USE_AUTO_MODE
+    setFlags(MAX31865_CONFIG_FAULTSTAT | MAX31865_CONFIG_MODEAUTO);
+  #else
+    setFlags(MAX31865_CONFIG_FAULTSTAT);
+    
+    _lastStamp = 0;
+    _lastStep = 0;
+  #endif
 
-  lastRead = 0;
-  lastStamp = 0;
-  lastStep = 0;
-  lastReadStamp = 0;
+  _lastRead = 0;
+  _lastReadStamp = 0;
 
   #if HAS_STM32_DEBUG
     //Serial.print("config: ");
-    //Serial.println(readRegister8(MAX31856_CONFIG_REG), HEX);
+    //Serial.println(readRegister8(MAX31865_CONFIG_REG), HEX);
   #endif
 
   #if HAS_STM32_DEBUG_SPI
@@ -357,9 +371,8 @@ bool Adafruit_MAX31865::begin(max31865_numwires_t wires) {
 /**************************************************************************/
 uint8_t Adafruit_MAX31865::readFault(void) {
 
-  lastRead = 0xFFFF; // readFault is called when THERMOCOUPLE_MAX_ERRORS is reached, so set lastRead to a killing value
-
-  return readRegister8(MAX31856_FAULTSTAT_REG);
+  _lastRead = 0xFFFF; // readFault is called when THERMOCOUPLE_MAX_ERRORS is reached, so set lastRead to a killing value
+  return _lastFault; // fault is read and kept right after occurring
 }
 
 /**************************************************************************/
@@ -368,10 +381,7 @@ uint8_t Adafruit_MAX31865::readFault(void) {
 */
 /**************************************************************************/
 void Adafruit_MAX31865::clearFault(void) {
-  uint8_t t = readRegister8(MAX31856_CONFIG_REG);
-  t &= ~0x2C;
-  t |= MAX31856_CONFIG_FAULTSTAT;
-  writeRegister8(MAX31856_CONFIG_REG, t);
+  setFlags(MAX31865_CONFIG_FAULTSTAT);
 }
 
 /**************************************************************************/
@@ -381,68 +391,15 @@ void Adafruit_MAX31865::clearFault(void) {
 */
 /**************************************************************************/
 void Adafruit_MAX31865::enableBias(bool b) {
-  uint8_t t = readRegister8(MAX31856_CONFIG_REG);
-  if (b) {
-    t |= MAX31856_CONFIG_BIAS; // enable bias
-  } else {
-    t &= ~MAX31856_CONFIG_BIAS; // disable bias
-  }
-  writeRegister8(MAX31856_CONFIG_REG, t);
-}
-
-/**************************************************************************/
-/*!
-    @brief Whether we want to have continuous conversions (50/60 Hz)
-    @param b If true, auto conversion is enabled
-*/
-/**************************************************************************/
-void Adafruit_MAX31865::autoConvert(bool b) {
-  uint8_t t = readRegister8(MAX31856_CONFIG_REG);
-  if (b) {
-    t |= MAX31856_CONFIG_MODEAUTO; // enable autoconvert
-  } else {
-    t &= ~MAX31856_CONFIG_MODEAUTO; // disable autoconvert
-  }
-  writeRegister8(MAX31856_CONFIG_REG, t);
-}
-
-/**************************************************************************/
-/*!
-    @brief Whether we want filter out 50Hz noise or 60Hz noise
-    @param b If true, 50Hz noise is filtered, else 60Hz(default)
-*/
-/**************************************************************************/
-
-void Adafruit_MAX31865::enable50Hz(bool b) {
-  uint8_t t = readRegister8(MAX31856_CONFIG_REG);
-  if (b) {
-    t |= MAX31856_CONFIG_FILT50HZ;
-  } else {
-    t &= ~MAX31856_CONFIG_FILT50HZ;
-  }
-  writeRegister8(MAX31856_CONFIG_REG, t);
-}
-
-/**************************************************************************/
-/*!
-    @brief How many wires we have in our RTD setup, can be MAX31865_2WIRE,
-    MAX31865_3WIRE, or MAX31865_4WIRE
-    @param wires The number of wires in enum format
-*/
-/**************************************************************************/
-void Adafruit_MAX31865::setWires(max31865_numwires_t wires) {
-  uint8_t t = readRegister8(MAX31856_CONFIG_REG);
-  if (wires == MAX31865_3WIRE) {
-    t |= MAX31856_CONFIG_3WIRE;
-  } else {
-    // 2 or 4 wire
-    t &= ~MAX31856_CONFIG_3WIRE;
-  }
-  writeRegister8(MAX31856_CONFIG_REG, t);
+  setFlags(b ? MAX31865_CONFIG_BIAS : MAX31865_DEFAULT_CONFIG);
 }
 
 void Adafruit_MAX31865::setFlags(uint8_t flags) {
-  writeRegister8(MAX31856_CONFIG_REG, MAX31865_DEFAULT_CONFIG | flags);
+  writeRegister8(MAX31865_CONFIG_REG, MAX31865_DEFAULT_CONFIG | flags);
+}
+
+void Adafruit_MAX31865::resetFlags() {
+  writeRegister8(MAX31865_CONFIG_REG, MAX31865_DEFAULT_CONFIG);
 }
 
 /**************************************************************************/
@@ -461,7 +418,7 @@ void Adafruit_MAX31865::setFlags(uint8_t flags) {
 float Adafruit_MAX31865::temperature(float RTDnominal, float refResistor) {
   float Z1, Z2, Z3, Z4, Rt, temp;
 
-  Rt = lastRead;
+  Rt = _lastRead;
 
   Rt /= 65536.0f;
   Rt *= refResistor;
@@ -506,12 +463,7 @@ float Adafruit_MAX31865::temperature(float RTDnominal, float refResistor) {
 */
 /**************************************************************************/
 uint16_t Adafruit_MAX31865::readRTD(void) {
-
-  uint16_t rtd = readRTD_with_Fault();
-  // remove fault
-  rtd >>= 1;
-
-  return rtd;
+  return  readRTD_with_Fault() >> 1;
 }
 
 /**************************************************************************/
@@ -547,69 +499,99 @@ uint16_t Adafruit_MAX31865::readRTD_Resistance(uint32_t refResistor) {
 /**************************************************************************/
 uint16_t Adafruit_MAX31865::readRTD_with_Fault(void) {
 
-  switch (lastStep) {
-  case 0:
-    setFlags(MAX31856_CONFIG_BIAS | MAX31856_CONFIG_FAULTSTAT);
+#ifndef MAX31865_USE_AUTO_MODE
 
-    lastStamp = millis();
-    lastStep = 1;
+  switch (_lastStep) {
+  case 0:
+    setFlags(MAX31865_CONFIG_BIAS);
+
+    _lastStamp = millis();
+    _lastStep = 1;
     break;
   
   case 1:
-    if (millis() - lastStamp < 10)
-      return lastRead;
+    if (millis() - _lastStamp < 10)
+      return _lastRead;
 
-    setFlags(MAX31856_CONFIG_BIAS | MAX31856_CONFIG_1SHOT);
+    setFlags(MAX31865_CONFIG_BIAS | MAX31865_CONFIG_1SHOT);
 
-    lastStamp = millis();
-    lastStep = 2;
+    _lastStamp = millis();
+    _lastStep = 2;
     break;
 
   case 2:
-    if (millis() - lastStamp < 65)
-      return lastRead;
-    rtd = readRegister16(MAX31856_RTDMSB_REG);
+    if (millis() - _lastStamp < 65)
+      return _lastRead;
+#endif
 
-    setFlags(MAX31865_DEFAULT_CONFIG);
+    _rtd = readRegister16(MAX31865_RTDMSB_REG);
 
-    lastStep = 0;
+    if (_rtd & 1) { 
+      _lastFault = readRegister8(MAX31865_FAULTSTAT_REG); // keep the fault in a variable and reset flag
+      clearFault();
 
-    if (!(rtd & 1)) { // no fault, update lastRead
-      lastRead = rtd;
-      lastReadStamp = millis();
-    #if HAS_STM32_DEBUG || HAS_LPC1768_DEBUG
-    } else {
-      SERIAL_ECHOLNPAIR("MAX31865 rawread error: ", rtd);
-    #endif
+#if HAS_STM32_DEBUG || HAS_LPC1768_DEBUG
+      SERIAL_ECHOLNPAIR("MAX31865 read fault: ", _rtd);
+#endif
+    } 
+#ifdef MAX31865_USE_READ_ERROR_DETECTION
+    else if (detectSpike()) { // not reported as error by the sensor
+      _lastFault = 0x01;
+      _rtd |= 1; // make it an error
+
+#if HAS_STM32_DEBUG || HAS_LPC1768_DEBUG
+      SERIAL_ECHOLNPAIR("MAX31865 read error: ", _rtd);
+#endif
     }
+#endif    
+    else {
+      _lastRead = _rtd;
+      _lastReadStamp = millis();
+
+    }
+
+#ifndef MAX31865_USE_AUTO_MODE
+    resetFlags();
+
+    _lastStep = 0;
 
     break;
   }
+#endif
 
-  #if HAS_STM32_DEBUG || HAS_LPC1768_DEBUG
-  if (lastStep == 0) {
-    uint16_t rtd_MSB = rtd >> 8;
-    uint16_t rtd_LSB = rtd & 0x00FF;
+#if HAS_STM32_DEBUG || HAS_LPC1768_DEBUG
+  #ifndef MAX31865_USE_AUTO_MODE
+    if (_lastStep == 0) {
   #endif
+      uint16_t rtd_MSB = _rtd >> 8;
+      uint16_t rtd_LSB = _rtd & 0x00FF;
+
   #if HAS_STM32_DEBUG
-    Serial.println(" ");
-    Serial.print("RTD MSB : 0x");
-    Serial.print(rtd_MSB, HEX);
-    Serial.print("  : ");
-    Serial.print(rtd_MSB);
-    Serial.print("  RTD LSB : 0x");
-    Serial.print(rtd_LSB, HEX);
-    Serial.print("  : ");
-    Serial.println(rtd_LSB);
-    Serial.println(" ");
-  }
-  #endif
-  #if HAS_LPC1768_DEBUG
+      Serial.println(" ");
+      Serial.print("RTD MSB : 0x");
+      Serial.print(rtd_MSB, HEX);
+      Serial.print("  : ");
+      Serial.print(rtd_MSB);
+      Serial.print("  RTD LSB : 0x");
+      Serial.print(rtd_LSB, HEX);
+      Serial.print("  : ");
+      Serial.println(rtd_LSB);
+      Serial.println(" ");
+  #else
     SERIAL_ECHOLNPAIR("MAX31865 MSB: ", rtd_MSB, " LSB: ", rtd_LSB);
-  }
   #endif
 
-  return rtd;
+  #ifndef MAX31865_USE_AUTO_MODE
+    }
+  #endif
+
+#endif
+
+  return _rtd;
+}
+
+bool Adafruit_MAX31865::detectSpike() {
+  return abs(_lastRead - _rtd) > 500 && millis() - _lastReadStamp < 1000; // if two readings within a second differ too much (~20°C), consider it a read error.
 }
 
 /**********************************************/
