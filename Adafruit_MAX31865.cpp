@@ -17,7 +17,7 @@
 //#define DEBUG_STM32
 //#define DEBUG_STM32_SPI
 //#define DEBUG_LPC_SPI
-//#define DEBUG_LPC
+#define DEBUG_LPC
 
 #if defined(ARDUINO_ARCH_STM32) && defined(DEBUG_STM32)
   #define HAS_STM32_DEBUG 1
@@ -85,6 +85,8 @@ uint32_t lastReadStamp = 0;
 uint16_t lastRead = 0;
 uint32_t lastStamp = 0;
 uint16_t lastStep = 0;
+uint8_t errorCount = 0;
+uint8_t lastFault = 0;
 
 /**************************************************************************/
 /*!
@@ -259,8 +261,9 @@ bool Adafruit_MAX31865::begin(max31865_numwires_t wires) {
   }
 
   setWires(wires);
-  enableBias(false);
-  autoConvert(false);
+  enableBias(true);
+  enable50Hz(true);
+  autoConvert(true);
   clearFault();
 
   lastRead = 0;
@@ -325,18 +328,18 @@ bool Adafruit_MAX31865::begin(max31865_numwires_t wires) {
   #if HAS_LPC1768_DEBUG_SPI
     // for testing
     if (!__pin_mapping) {
-      SERIAL_ECHOLN();
+      SERIAL_ECHOLN("");
       SERIAL_ECHOLNPAIR("Regular call for _cs: ", _cs ," _miso: ", _miso ," _sclk: ", _sclk," _mosi: ",_mosi);
       SERIAL_PRINTF("Regular call for _cs: 0x%X  _miso: 0x%X  _sclk: 0x%X  _mosi: 0x%X  ", _cs, _miso, _sclk, _mosi);
-      SERIAL_ECHOLN();
-      SERIAL_ECHOLN();
+      SERIAL_ECHOLN("");
+      SERIAL_ECHOLN("");
     }
     else {
       SERIAL_ECHOLN();
       SERIAL_ECHOLNPAIR("PIN_MAPPING call for __cs: ", __cs ," __miso: ", __miso ," __sclk: ", __sclk," __mosi: ",__mosi);
       SERIAL_PRINTF("PIN_MAPPING call for __cs: 0x%X  __miso: 0x%X  __sclk: 0x%X  __mosi: 0x%X  ", __cs, __miso, __sclk, __mosi);
-      SERIAL_ECHOLN();
-      SERIAL_ECHOLN();
+      SERIAL_ECHOLN("");
+      SERIAL_ECHOLN("");
     }
   #endif
 
@@ -451,11 +454,7 @@ void Adafruit_MAX31865::setWires(max31865_numwires_t wires) {
 float Adafruit_MAX31865::temperature(float RTDnominal, float refResistor) {
   float Z1, Z2, Z3, Z4, Rt, temp;
 
-  if (millis() - lastReadStamp > 5000)
-    return 20;
-
-  Rt = readRTD();
-
+  Rt = lastRead >> 1;
   Rt /= 32768;
   Rt *= refResistor;
 
@@ -541,9 +540,11 @@ uint16_t Adafruit_MAX31865::readRTD_Resistance(uint32_t refResistor) {
 uint16_t Adafruit_MAX31865::readRTD_with_Fault(void) {
 
   uint8_t t;
-  uint16_t rtd;
+  uint16_t rtd = 0;
 
-  switch (lastStep) {
+  rtd = readRegister16(MAX31856_RTDMSB_REG);
+
+/*  switch (lastStep) {
   case 0:
     clearFault();
     enableBias(true);
@@ -568,16 +569,34 @@ uint16_t Adafruit_MAX31865::readRTD_with_Fault(void) {
     if (millis() - lastStamp < 65)
       return lastRead;
     rtd = readRegister16(MAX31856_RTDMSB_REG);
+    enableBias(false);
 
     lastStep = 0;
-    lastRead = rtd;
-    lastReadStamp = millis();
+*/
+    if (rtd & 0x0001) // fault
+    {
+      #if HAS_STM32_DEBUG || HAS_LPC1768_DEBUG
+        SERIAL_ECHOLNPAIR("MAX31865 rawread fault: ", rtd);
+      #endif
+    }
+    else if ((rtd - lastRead > 1000 || lastRead - rtd > 1000) && millis() - lastReadStamp < 1000)
+    {
+      #if HAS_STM32_DEBUG || HAS_LPC1768_DEBUG
+        SERIAL_ECHOLNPAIR("MAX31865 rawread error: ", rtd);
+      #endif
+      rtd |= 0x0001;
+    }
+    else
+    {
+      lastReadStamp = millis();
+      lastRead = rtd;
+    }
 
-    break;
-  }
+//    break;
+//  }
 
   #if HAS_STM32_DEBUG || HAS_LPC1768_DEBUG
-  if (lastStep = 0) {
+  if (lastStep == 0) {
     uint16_t rtd_MSB = rtd >> 8;
     uint16_t rtd_LSB = rtd & 0x00FF;
   #endif
@@ -595,18 +614,11 @@ uint16_t Adafruit_MAX31865::readRTD_with_Fault(void) {
   }
   #endif
   #if HAS_LPC1768_DEBUG
-    SERIAL_ECHOLN();
-    SERIAL_ECHO("RTD MSB : ");
-    SERIAL_PRINTF("   0x%X  ", rtd_MSB);
-    SERIAL_ECHOPAIR(" : ", rtd_MSB);
-    SERIAL_ECHO("   RTD LSB : ");
-    SERIAL_PRINTF("   0x%X  ", rtd_LSB);
-    SERIAL_ECHOLNPAIR(" : ", rtd_LSB,"   ");
-    SERIAL_ECHOLN();
+    SERIAL_ECHOLNPAIR("RTD MSB: ", rtd_MSB, " RTD LSB: ", rtd_LSB, " Fault: ", lastFault);
   }
   #endif
 
-  return lastRead;
+  return rtd;
 }
 
 /**********************************************/
