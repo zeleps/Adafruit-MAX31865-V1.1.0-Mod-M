@@ -41,6 +41,10 @@
 
 #include "Adafruit_MAX31865.h"
 
+#ifndef MAX31865_CABLE_RESISTANCE_OHM
+  #define MAX31865_CABLE_RESISTANCE_OHM 0.0f
+#endif
+
 #if !defined(__AVR__)
   #include "../../../../Marlin/src/HAL/shared/Delay.h"
 #endif
@@ -419,11 +423,10 @@ float Adafruit_MAX31865::temperature(float RTDnominal, float refResistor) {
   float Z1, Z2, Z3, Z4, Rt, temp;
 
   Rt = _lastRead;
-
-  Rt /= 65536.0f;
-  Rt *= refResistor;
-
-  // Serial.print("\nResistance: "); Serial.println(Rt, 8);
+  Rt = Rt / 65536.0f * refResistor - MAX31865_CABLE_RESISTANCE_OHM;
+  
+  // Serial.print("MAX31865 Resistance value: "); Serial.println(Rt, 8);
+  // SERIAL_ECHOLNPAIR("MAX31865 Resistance value: ", Rt);
 
   Z1 = -RTD_A;
   Z2 = RTD_A * RTD_A - (4.0 * RTD_B);

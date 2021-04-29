@@ -31,6 +31,9 @@
 
 // Uncomment for 3-wire PT100/PT1000 sensor. Leave commented for 2/4 wire sensor.
 //#define MAX31865_USE_3WIRE
+
+// If cable resistance is known on a 2-wire setup, define it here to improve accuracy
+//#define MAX31865_CABLE_RESISTANCE_OHM 0.0f
 /****************************************************/
 
 
