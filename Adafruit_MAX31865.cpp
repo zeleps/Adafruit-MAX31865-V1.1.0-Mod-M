@@ -12,7 +12,12 @@
 
   Written by Limor Fried/Ladyada for Adafruit Industries.
   BSD license, all text above must be included in any redistribution
- ****************************************************/
+  
+  Addendum:
+
+  This library fork is modified to build and operate 
+  correctly with Marlin bugfix-2.0 version
+  ****************************************************/
 
 //#define DEBUG_STM32
 //#define DEBUG_STM32_SPI
@@ -388,16 +393,6 @@ void Adafruit_MAX31865::clearFault(void) {
   setFlags(MAX31865_CONFIG_FAULTSTAT);
 }
 
-/**************************************************************************/
-/*!
-    @brief Enable the bias voltage on the RTD sensor
-    @param b If true bias is enabled, else disabled
-*/
-/**************************************************************************/
-void Adafruit_MAX31865::enableBias(bool b) {
-  setFlags(b ? MAX31865_CONFIG_BIAS : MAX31865_DEFAULT_CONFIG);
-}
-
 void Adafruit_MAX31865::setFlags(uint8_t flags) {
   writeRegister8(MAX31865_CONFIG_REG, MAX31865_DEFAULT_CONFIG | flags);
 }
@@ -457,41 +452,6 @@ float Adafruit_MAX31865::temperature(float RTDnominal, float refResistor) {
   temp += 1.5243e-10f * rpoly;
 
   return temp;
-}
-
-/**************************************************************************/
-/*!
-    @brief Read the raw 16-bit value from the RTD_REG in one shot mode
-    @return The raw unsigned 16-bit value, NOT temperature!
-*/
-/**************************************************************************/
-uint16_t Adafruit_MAX31865::readRTD(void) {
-  return  readRTD_with_Fault() >> 1;
-}
-
-/**************************************************************************/
-/*!
-    @brief Read the raw 16-bit value from the RTD_REG in one shot mode and
-    calucalte the RTD resistance value
-    @param refResistor The value of the matching reference resistor, usually
-    430 or 4300
-    @return The raw unsigned 16-bit RTD resistance value, NOT temperature!
-*/
-/**************************************************************************/
-uint16_t Adafruit_MAX31865::readRTD_Resistance(uint32_t refResistor) {
-  uint32_t Rt;
-  uint16_t rtd;
-
-  rtd = readRTD();
-
-  Rt = rtd;
-  Rt *= refResistor;
-  Rt >>= 16;
-  rtd = 0;
-
-  rtd = Rt;
-
-  return rtd;
 }
 
 /**************************************************************************/

@@ -12,10 +12,20 @@
 
   Written by Limor Fried/Ladyada for Adafruit Industries.
   BSD license, all text above must be included in any redistribution
+
+  Addendum:
+
+  This library fork is modified to build and operate 
+  correctly with Marlin bugfix-2.0 version
  ****************************************************/
 
 #ifndef ADAFRUIT_MAX31865_H
 #define ADAFRUIT_MAX31865_H
+
+// Ensuring the correct build path, avoiding changes to conditionals_post.h
+#define LIB_MAX31865
+#define LIB_USR_MAX31865 1
+#undef LIB_ADAFRUIT_MAX31865
 
 /****************************************************/
 // Configuration macros:
@@ -96,15 +106,8 @@ public:
 
   uint8_t readFault(void);
   void clearFault(void);
-  uint16_t readRTD(void);
-
-  void setWires(max31865_numwires_t wires);
-  void autoConvert(bool b);
-  void enable50Hz(bool b);
-  void enableBias(bool b);
 
   float temperature(float RTDnominal, float refResistor);
-  uint16_t readRTD_Resistance(uint32_t refResistor);
   uint16_t readRTD_with_Fault(void);
 
 private:
